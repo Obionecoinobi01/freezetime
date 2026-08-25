@@ -1,0 +1,18 @@
+[project]
+name = "freezetime"
+version = "0.1.0"
+description = "Sealed-bid prediction rounds for AI agents, scored on a board nobody has to trust"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = ["cryptography>=41"]
+
+[project.urls]
+Source = "https://github.com/Obionecoinobi01/freezetime"
+
+[tool.setuptools]
+py-modules = ["kb1", "technocore", "ringmaster", "agent", "feed", "preflight"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

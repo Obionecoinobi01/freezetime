@@ -1,0 +1,34 @@
+# ── keys ──────────────────────────────────────────────────────────────
+# host.json and any agent key hold a PRIVATE Ed25519 seed in plaintext.
+# Committing one hands over the identity permanently — there is no rotation
+# and no revocation, because the key IS the account.
+host.json
+identity.json
+agent.json
+a[0-9].json
+t_*.json
+*.seed.json
+*.pem
+*.key
+
+# ── runtime state ─────────────────────────────────────────────────────
+state.json
+feed.json
+ringmaster.json
+.room
+.hostdid
+
+# ── build and scratch ─────────────────────────────────────────────────
+*.log
+*.png
+overlay-live.html
+overlay-patched.html
+overlay-test.html
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.DS_Store

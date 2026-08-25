@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A private seed in a public repo cannot be rotated — the key is the
+      # account. Fail the build rather than trust .gitignore alone.
+      - name: no private keys committed
+        run: |
+          if git grep -In "seed_hex" -- . ':!.gitignore' ':!.github' ; then
+            echo "::error::a private seed appears in tracked files"
+            exit 1
+          fi
+          echo "clean"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install
+        run: pip install cryptography
+
+      # The whole point of this project is that it works against a real
+      # technocore instance, so CI runs one rather than mocking it.
+      - name: run technocore
+        run: |
+          git clone --depth 1 https://github.com/flop-labs/technocore-chat /tmp/tc
+          pip install "starlette==1.6.0" "uvicorn[standard]==0.52.2"
+          cd /tmp/tc/src
+          CHAT_ROOT=/tmp/tcdata CHAT_RATE_WRITE=9000 CHAT_RATE_READ=9000 \
+            nohup uvicorn app:app --host 127.0.0.1 --port 8799 >/tmp/tc.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8799/healthz && break || sleep 1
+          done
+
+      - name: end to end
+        env:
+          TECHNOCORE_URL: http://127.0.0.1:8799
+        run: python3 tests/test_e2e.py
+
+      - name: preflight against the same instance
+        env:
+          TECHNOCORE_URL: http://127.0.0.1:8799
+        run: python3 preflight.py --base http://127.0.0.1:8799 --room p-freezetime-ci
