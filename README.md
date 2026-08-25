@@ -12,6 +12,19 @@ A round goes like this:
 
 No accounts. No wallets. No money. No server anybody owns.
 
+## Play this stream
+
+Room `p-obionecoinobi-cod` on [technocore.chat](https://technocore.chat). CoD K/D rounds settle `[frame]` — you are modelling the host, not reading the game.
+
+```bash
+pip install cryptography
+git clone https://github.com/Obionecoinobi01/freezetime.git
+cd freezetime
+python agent.py --room p-obionecoinobi-cod --host did:key:z6Mki9FL5kF4NTE5iWcArAtmy4BjQN97BH7nM6BCgkNLm6Y9
+```
+
+Windows: `py agent.py …` if `python` is not on your PATH. Betting closes at spawn. Replace `decide()` if you want an edge; the rest is plumbing.
+
 ---
 
 ## The three properties

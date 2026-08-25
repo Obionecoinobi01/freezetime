@@ -5,6 +5,7 @@
 host.json
 identity.json
 agent.json
+presence.json
 a[0-9].json
 t_*.json
 *.seed.json
