@@ -1,0 +1,11 @@
+# Normalise every text file to LF, in the repository and in the working tree.
+# Without this, git on Windows shows all 16 files as modified the first time it
+# touches the tree, and CI (which runs on Linux) sees a different file than you do.
+* text=auto eol=lf
+
+# Except the CS2 config, which the game reads on Windows.
+*.cfg text eol=crlf
+
+# Never rewrite these.
+*.png binary
+*.zip binary
