@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>freezetime desk</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #07081a;
+    --card: #0d0f26;
+    --accent: #ff7a29;
+    --gold: #ffd166;
+    --text: #f2eeff;
+    --dim: #7b7aa6;
+    --live: #3dff9a;
+    --over: #ff5c72;
+    --lobby: #6ea8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 13px; letter-spacing: .22em; color: var(--accent); margin: 0 0 6px; }
+  .sub { color: var(--dim); font-size: 14px; margin-bottom: 18px; }
+  .states { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  button {
+    border: 1px solid rgba(255,122,41,.35); background: var(--card); color: var(--text);
+    font: inherit; font-weight: 700; letter-spacing: .08em; padding: 18px 8px;
+    border-radius: 4px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.on-lobby { background: #132047; border-color: var(--lobby); color: var(--lobby); }
+  button.on-live { background: #0d2a1c; border-color: var(--live); color: var(--live); }
+  button.on-over { background: #2a1016; border-color: var(--over); color: var(--over); }
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .stat {
+    background: var(--card); border: 1px solid rgba(255,122,41,.22); border-radius: 4px;
+    padding: 14px 10px; text-align: center;
+  }
+  .stat label { display: block; font-size: 11px; letter-spacing: .18em; color: var(--dim); }
+  .stat .n { font-size: 42px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; margin: 6px 0; }
+  .pm { display: flex; gap: 8px; justify-content: center; }
+  .pm button { width: 48px; padding: 8px; font-size: 20px; }
+  .kd {
+    margin: 16px 0; text-align: center; font-size: 28px; font-weight: 800; color: var(--gold);
+    font-variant-numeric: tabular-nums;
+  }
+  .row { display: flex; gap: 10px; margin-top: 12px; }
+  .row button { flex: 1; }
+  .keys { margin-top: 18px; color: var(--dim); font-size: 13px; line-height: 1.55; }
+  kbd {
+    font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--gold);
+    border: 1px solid rgba(255,209,102,.35); padding: 0 5px; border-radius: 3px; font-size: 12px;
+  }
+  .status { margin-top: 14px; font-size: 13px; color: var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <h1>FREEZETIME DESK</h1>
+  <div class="sub">Call of Duty and any game with no live feed. Click LIVE when betting should close.</div>
+  <div class="states">
+    <button id="b-lobby" onclick="setState('lobby')">1 · LOBBY</button>
+    <button id="b-live" onclick="setState('live')">2 · LIVE</button>
+    <button id="b-over" onclick="setState('over')">3 · OVER</button>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <label>KILLS</label>
+      <div class="n" id="kills">0</div>
+      <div class="pm">
+        <button onclick="inc('kills',-1)">−</button>
+        <button onclick="inc('kills',1)">+</button>
+      </div>
+    </div>
+    <div class="stat">
+      <label>DEATHS</label>
+      <div class="n" id="deaths">0</div>
+      <div class="pm">
+        <button onclick="inc('deaths',-1)">−</button>
+        <button onclick="inc('deaths',1)">+</button>
+      </div>
+    </div>
+    <div class="stat">
+      <label>ASSISTS</label>
+      <div class="n" id="assists">0</div>
+      <div class="pm">
+        <button onclick="inc('assists',-1)">−</button>
+        <button onclick="inc('assists',1)">+</button>
+      </div>
+    </div>
+  </div>
+  <div class="kd">K/D <span id="kd">—</span></div>
+  <div class="row">
+    <button onclick="resetMatch()">R · RESET MATCH</button>
+  </div>
+  <div class="keys">
+    Keep this window focused on your second monitor.<br>
+    <kbd>1</kbd> lobby · <kbd>2</kbd> live · <kbd>3</kbd> over ·
+    <kbd>K</kbd>/<kbd>D</kbd>/<kbd>A</kbd> +1 · hold <kbd>Shift</kbd> for −1 ·
+    <kbd>R</kbd> reset
+  </div>
+  <div class="status" id="status">connecting…</div>
+</main>
+<script>
+let feed = {};
+
+function paint(cur) {
+  feed = cur || {};
+  const st = feed.state || "lobby";
+  ["lobby","live","over"].forEach(s => {
+    document.getElementById("b-"+s).className = st === s ? "on-"+s : "";
+  });
+  for (const k of ["kills","deaths","assists"]) {
+    document.getElementById(k).textContent = feed[k] == null ? 0 : feed[k];
+  }
+  document.getElementById("kd").textContent = feed.kd == null ? "—" : Number(feed.kd).toFixed(4);
+  document.getElementById("status").textContent =
+    `${st} · k=${feed.kills||0} d=${feed.deaths||0} a=${feed.assists||0} · ${feed.source||"desk"}`;
+}
+
+async function post(body) {
+  const r = await fetch("/", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(r.status);
+  paint(await r.json());
+}
+
+function setState(state) { post({state}).catch(e => statusErr(e)); }
+function inc(field, n) { post({inc:{[field]: n}}).catch(e => statusErr(e)); }
+function resetMatch() { post({reset:true, state:"lobby"}).catch(e => statusErr(e)); }
+function statusErr(e) { document.getElementById("status").textContent = "desk error: " + e; }
+
+document.addEventListener("keydown", ev => {
+  if (ev.repeat || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+  const k = ev.key;
+  if (k === "1") setState("lobby");
+  else if (k === "2") setState("live");
+  else if (k === "3") setState("over");
+  else if (k === "r" || k === "R") resetMatch();
+  else if (k === "k" || k === "K") inc("kills", ev.shiftKey ? -1 : 1);
+  else if (k === "d" || k === "D") inc("deaths", ev.shiftKey ? -1 : 1);
+  else if (k === "a" || k === "A") inc("assists", ev.shiftKey ? -1 : 1);
+  else return;
+  ev.preventDefault();
+});
+
+async function pull() {
+  try {
+    const r = await fetch("/feed", {cache:"no-store"});
+    if (r.ok) paint(await r.json());
+  } catch (e) { /* keep last */ }
+}
+pull();
+setInterval(pull, 1000);
+</script>
+</body>
+</html>

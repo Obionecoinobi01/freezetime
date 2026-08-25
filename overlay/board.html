@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>freezetime board</title>
+<style>
+  :root {
+    --bg: rgba(7, 8, 26, 0.94);
+    --accent: #ff7a29;
+    --gold: #ffd166;
+    --text: #f2eeff;
+    --dim: #7b7aa6;
+    --line: rgba(255, 122, 41, 0.28);
+  }
+  html, body {
+    margin: 0; padding: 0; background: transparent;
+    font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    color: var(--text);
+  }
+  #card {
+    margin: 12px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.66), inset 0 1px 0 rgba(255,209,102,.08);
+    overflow: hidden;
+  }
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(90deg, rgba(255,122,41,.12), transparent 62%);
+  }
+  .mark { font-size: 11px; font-weight: 700; letter-spacing: .20em; color: var(--accent); }
+  .title { font-size: 18px; font-weight: 700; }
+  .src { font-size: 11px; color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; font-size: 10px; letter-spacing: .14em; color: var(--dim);
+    font-weight: 700; padding: 8px 10px 6px; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 7px 10px; font-size: 14px; color: #ded9f5; }
+  td.rank { color: var(--accent); font-weight: 700; width: 2.2em; }
+  td.who { color: var(--gold); }
+  tr.hi td { background: rgba(255,122,41,.10); }
+  th.r, td.r { text-align: right; }
+  footer {
+    padding: 10px 16px 14px; font-size: 12px; color: var(--dim);
+    border-top: 1px solid var(--line); line-height: 1.45;
+  }
+  footer b { color: var(--gold); font-weight: 700; }
+  footer div + div { margin-top: 4px; }
+  body.live-open header .mark { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+  @media (prefers-reduced-motion: reduce) {
+    body.live-open header .mark { animation: none; }
+  }
+  .empty { padding: 28px 16px; color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="card">
+  <header>
+    <div>
+      <div class="mark">LIVE ROUND</div>
+      <div class="title" id="title">AGENT BOARD</div>
+    </div>
+    <div class="src" id="src"></div>
+  </header>
+  <div id="body"><div class="empty">waiting for ringmaster…</div></div>
+  <footer id="foot"></footer>
+</div>
+<script>
+const SRC = new URLSearchParams(location.search).get("src") || "/board.json";
+let last = null;
+
+function paint(data) {
+  last = data;
+  const v = data && data.views && data.views.live;
+  const live = (data && data.live) || {};
+  document.body.classList.toggle("live-open", live.state === "BETTING OPEN");
+  if (!v) return;
+  document.getElementById("title").textContent = v.title || "AGENT BOARD";
+  const meta = data.meta || {};
+  document.getElementById("src").textContent =
+    [meta.source, meta.window].filter(Boolean).join(" · ");
+  const cols = v.cols || [];
+  const right = new Set(v.right || []);
+  const who = v.who;
+  const hi = new Set(v.hi || []);
+  const rows = v.rows || [];
+  if (!rows.length) {
+    document.getElementById("body").innerHTML = '<div class="empty">no agents on the board yet</div>';
+  } else {
+    let html = "<table><thead><tr>";
+    cols.forEach((c, i) => {
+      html += `<th class="${right.has(i) ? "r" : ""}">${esc(c)}</th>`;
+    });
+    html += "</tr></thead><tbody>";
+    rows.forEach((row, ri) => {
+      html += `<tr class="${hi.has(ri) ? "hi" : ""}">`;
+      row.forEach((cell, i) => {
+        const cls = [right.has(i) ? "r" : "", i === who ? "who" : "", i === 0 ? "rank" : ""]
+          .filter(Boolean).join(" ");
+        html += `<td class="${cls}">${esc(cell)}</td>`;
+      });
+      html += "</tr>";
+    });
+    html += "</tbody></table>";
+    document.getElementById("body").innerHTML = html;
+  }
+  const foot = v.foot || [];
+  document.getElementById("foot").innerHTML = foot.map(x => `<div>${x}</div>`).join("");
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[c]));
+}
+
+async function pull() {
+  try {
+    const r = await fetch(SRC, { cache: "no-store" });
+    if (r.ok) paint(await r.json());
+  } catch (e) { /* hold last good board */ }
+}
+pull();
+setInterval(pull, 1500);
+</script>
+</body>
+</html>

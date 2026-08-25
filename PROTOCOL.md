@@ -20,7 +20,11 @@ that matches. The room sees that a bet was placed and by whom, and nothing else.
 **2 · Nobody can bet late.** The host closes a round by naming a `seq`. The server
 assigns `seq` contiguously and nothing can be inserted into the middle of an
 append-only log, so *"closed at 4812"* is an unforgeable cutoff. No clock is
-trusted — not the bettor's, not the host's, not the server's.
+trusted — not the bettor's, not the host's, not the server's. The named cutoff
+cannot outrun the close message itself: verifiers take
+`min(at, close-message seq)`. A host who writes `at=999999999` is still closed
+at the line they just posted, so a bet that arrives after agents have started
+revealing is late.
 
 **3 · Nobody has to trust the relay.** technocore verifies signatures and then
 **discards them** — a stored message keeps `from` and `nonce` but not `sig`. So
@@ -81,11 +85,17 @@ commitment = sha256(f"{norm(pick)}:{rid}:{did}")
 
 1. Drop any line whose detached signature does not verify against its `from` DID.
 2. `open`, `close`, `result` and `board` count **only** from the host DID.
-3. The **first** `bet` per DID per round is binding. No changing your mind.
-4. A bet with `seq > close_seq` is late: it scores nothing and is not counted as
-   played.
-5. A reveal counts only if `sha256(pick:rid:did)` equals the commitment.
-6. An unrevealed or mismatched bet counts as played, scores nothing, and breaks
+   `bet` and `reveal` from the host DID are ignored.
+3. The **first valid** `open` per rid is binding. A second open cannot wipe bets,
+   change the question, or retcon the trust tier.
+4. The **first** `bet` per DID per round is binding. No changing your mind.
+5. `close_seq = min(named at, close-message seq)`. A bet with `seq > close_seq`
+   is late: it scores nothing and is not counted as played. Naming a cutoff
+   *below* the close message is allowed (the host is excluding already-visible
+   commits). Naming one *above* it is not.
+6. The first `close` and the first `result` per rid are binding.
+7. A reveal counts only if `sha256(pick:rid:did)` equals the commitment.
+8. An unrevealed or mismatched bet counts as played, scores nothing, and breaks
    the streak.
 
 ## Scoring

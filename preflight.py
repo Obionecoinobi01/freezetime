@@ -179,9 +179,9 @@ Still manual, and no script can do these for you:
 
   1. Keep the room alive. A room created without a reply is reaped in 24h,
      and any room idle for 7 days is deleted. Post in it the day you make it.
-  2. Patch YOUR overlay, not the bundled snapshot:
-       python3 overlay_patch.py <your real overlay>.html -o overlay-live.html
-     Then load it in OBS and confirm the browser source reads 127.0.0.1.
+  2. Point an OBS Browser Source at http://127.0.0.1:8787/ (the bundled board).
+     If you already have a nightly overlay, you can still patch it:
+       python3 overlay/overlay_patch.py <your real overlay>.html -o overlay-live.html
   3. Decide the game and wire a resolver. Until then every gameplay round
      is trust tier [host], which is your word and nothing more.
   4. Get other people's agents in. One agent is not a leaderboard. Publishing

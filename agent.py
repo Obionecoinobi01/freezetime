@@ -103,16 +103,42 @@ class Agent:
         self.room, self.host = room, host
         self.min_trust = kb1.TRUST.get(min_trust, 1)
         self.label = label or self.cli.identity.short
+        self.picks_path = os.path.splitext(os.path.abspath(keyfile))[0] + ".picks.json"
         self.picks: dict[str, str] = {}
         self.revealed: set[str] = set()
+        self._load_picks()
+
+    def _load_picks(self) -> None:
+        if not os.path.exists(self.picks_path):
+            return
+        try:
+            data = json.load(open(self.picks_path, encoding="utf-8"))
+        except Exception:
+            return
+        if isinstance(data.get("picks"), dict):
+            self.picks = {str(k): str(v) for k, v in data["picks"].items()}
+        if isinstance(data.get("revealed"), list):
+            self.revealed = {str(x) for x in data["revealed"]}
+
+    def _save_picks(self) -> None:
+        blob = {"picks": self.picks, "revealed": sorted(self.revealed)}
+        tmp = self.picks_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(blob, fh)
+        os.replace(tmp, self.picks_path)
 
     def _say(self, verb: str, rid: str, fields: dict) -> None:
         sig = self.cli.identity.sign(kb1.Line(verb=verb, rid=rid, fields=fields)._payload(self.room))
         self.cli.say(self.room, kb1.render(verb, rid, fields, sig))
 
     def bet(self, rnd: kb1.Round, history: dict | None = None) -> None:
-        pick = decide(rnd, history)
-        self.picks[rnd.rid] = pick
+        # Persist the pick BEFORE the write. If we die between the two, the next
+        # loop retries the same commitment; first-bet-wins drops a duplicate.
+        # The other order (write then persist) cannot reveal after a restart.
+        if rnd.rid not in self.picks:
+            self.picks[rnd.rid] = decide(rnd, history)
+            self._save_picks()
+        pick = self.picks[rnd.rid]
         # The room sees a commitment, never the pick. Bound to our own DID, so a
         # copied commitment is useless to whoever copied it.
         self._say("bet", rnd.rid, {"c": kb1.commitment(pick, rnd.rid, self.cli.identity.did)})
@@ -124,9 +150,10 @@ class Agent:
             return
         self._say("reveal", rnd.rid, {"p": pick})
         self.revealed.add(rnd.rid)
+        self._save_picks()
         print(f"[{self.label}] {rnd.rid} revealed {pick}")
 
-    def verify_board(self, ns: str = "kolbet", key: str = "board") -> None:
+    def verify_board(self, ns: str = "freezetime", key: str = "board") -> None:
         """Don't trust the board — recompute it, then check the host's signature."""
         raw = self.cli.note(ns, key)
         rec = kb1.read_record(raw or "", ns, key, self.host)
@@ -134,13 +161,15 @@ class Agent:
             print(f"[{self.label}] board did not verify — treating as absent")
             return
         version, rows = rec
-        msgs = self.cli.read(self.room, since=0, limit=200).get("messages", [])
-        mine = kb1.score(kb1.collect(msgs, self.room, self.host))
+        log = kb1.Log(self.cli, self.room, self.host)
+        log.poll(wait=0)
+        mine = kb1.score(log.rounds())
         agree = all(
             mine.get(r["did"], {}).get("points", -1) == r["points"] for r in rows
         )
+        gap = " (LOG GAP — comparison may be incomplete)" if log.gap else ""
         print(f"[{self.label}] board v{version} signature OK, "
-              f"recomputed from the log: {'MATCHES' if agree else 'DISAGREES'}")
+              f"recomputed from the log: {'MATCHES' if agree else 'DISAGREES'}{gap}")
 
     def loop(self, once: bool = False, poll: float = 0.0) -> None:
         print(f"[{self.label}] watching /r/{self.room} as {self.cli.identity.did}")
@@ -150,41 +179,45 @@ class Agent:
             try:
                 log.poll(wait=10)          # blocks until something new lands
                 backoff = 0.0
+                rounds = log.rounds()
+                for rnd in sorted(rounds.values(), key=lambda r: r.open_seq):
+                    me = self.cli.identity.did
+                    if rnd.close_seq is None and me not in rnd.bets:
+                        # Skip rounds settled more weakly than we are willing to accept.
+                        # Refusing to play a [host] round is a position, and the board
+                        # shows it: VER% is the share of points you did not have to
+                        # take anyone's word for.
+                        if kb1.TRUST.get(rnd.trust, 0) < self.min_trust:
+                            if rnd.rid not in done:
+                                done.add(rnd.rid)
+                                print(f"[{self.label}] {rnd.rid} skipped — settles "
+                                      f"[{rnd.trust}], below my floor")
+                            continue
+                        self.bet(rnd, rounds)
+                    elif rnd.close_seq is not None and me in rnd.bets \
+                            and rnd.rid not in self.revealed and me not in rnd.reveals:
+                        self.reveal(rnd)
+                    if rnd.settled and rnd.rid not in done:
+                        done.add(rnd.rid)
+                        got = self.picks.get(rnd.rid)
+                        if rnd.numeric:
+                            a, b = kb1.as_number(got), kb1.as_number(rnd.winner)
+                            off = f"off by {abs(a - b):.2f}" if a is not None and b is not None else "no pick"
+                            print(f"[{self.label}] {rnd.rid} guessed {got}, landed {rnd.winner} — {off}")
+                        else:
+                            mark = "WON " if kb1.norm(got or "") == rnd.winner else "lost"
+                            print(f"[{self.label}] {rnd.rid} {mark} — winner {rnd.winner} ({rnd.evidence})")
+                        if once:
+                            return
+                if poll:
+                    time.sleep(poll)
             except TechnocoreError as exc:
                 backoff = min(30.0, (backoff or 1.0) * 2)
-                print(f"[{self.label}] {exc}", file=sys.stderr); time.sleep(backoff); continue
-            rounds = log.rounds()
-            for rnd in sorted(rounds.values(), key=lambda r: r.open_seq):
-                me = self.cli.identity.did
-                if rnd.close_seq is None and me not in rnd.bets:
-                    # Skip rounds settled more weakly than we are willing to accept.
-                    # Refusing to play a [host] round is a position, and the board
-                    # shows it: VER% is the share of points you did not have to
-                    # take anyone's word for.
-                    if kb1.TRUST.get(rnd.trust, 0) < self.min_trust:
-                        if rnd.rid not in done:
-                            done.add(rnd.rid)
-                            print(f"[{self.label}] {rnd.rid} skipped — settles "
-                                  f"[{rnd.trust}], below my floor")
-                        continue
-                    self.bet(rnd, rounds)
-                elif rnd.close_seq is not None and me in rnd.bets \
-                        and rnd.rid not in self.revealed and me not in rnd.reveals:
-                    self.reveal(rnd)
-                if rnd.settled and rnd.rid not in done:
-                    done.add(rnd.rid)
-                    got = self.picks.get(rnd.rid)
-                    if rnd.numeric:
-                        a, b = kb1.as_number(got), kb1.as_number(rnd.winner)
-                        off = f"off by {abs(a - b):.2f}" if a is not None and b is not None else "no pick"
-                        print(f"[{self.label}] {rnd.rid} guessed {got}, landed {rnd.winner} — {off}")
-                    else:
-                        mark = "WON " if kb1.norm(got or "") == rnd.winner else "lost"
-                        print(f"[{self.label}] {rnd.rid} {mark} — winner {rnd.winner} ({rnd.evidence})")
-                    if once:
-                        return
-            if poll:
-                time.sleep(poll)
+                print(f"[{self.label}] {exc}", file=sys.stderr)
+                time.sleep(backoff)
+            except Exception as exc:
+                print(f"[{self.label}] {type(exc).__name__}: {exc}", file=sys.stderr)
+                time.sleep(3)
 
 
 def main() -> None:

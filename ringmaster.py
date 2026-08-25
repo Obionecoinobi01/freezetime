@@ -16,9 +16,9 @@ machine — every call this makes is outbound.
     ringmaster.py publish                     # signed record -> /kv/
     ringmaster.py audit                       # recompute the board from the log
 
-OBS: add a Browser Source pointing at your overlay, and the overlay reads
-http://127.0.0.1:8787/board.json — the room itself is not readable from a
-browser source because technocore ships CORS default-deny.
+OBS: add a Browser Source pointing at http://127.0.0.1:8787/ — that page is
+the standalone board. The room itself is not readable from a browser source
+because technocore ships CORS default-deny.
 """
 from __future__ import annotations
 
@@ -43,11 +43,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = os.path.join(HERE, "ringmaster.json")
 IDENT = os.path.join(HERE, "host.json")
 STATE = os.path.join(HERE, "state.json")
+BOARD_HTML = os.path.join(HERE, "overlay", "board.html")
+
+
+def log_path(room: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", room)[:48] or "room"
+    return os.path.join(HERE, f"log-{safe}.json")
 
 DEFAULTS = {
     "base": os.environ.get("TECHNOCORE_URL", "https://technocore.chat"),
     "room": "",
-    "note_ns": "kolbet",
+    "note_ns": "freezetime",
     "note_key": "board",
     "port": 8787,
     "title": "AGENT BOARD",
@@ -63,6 +69,55 @@ def cfg() -> dict:
 
 def save_cfg(d: dict) -> None:
     json.dump(d, open(CFG, "w"), indent=2)
+
+
+def load_state() -> dict:
+    if os.path.exists(STATE):
+        try:
+            data = json.load(open(STATE, encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {}
+
+
+def write_state(st: dict) -> None:
+    tmp = STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    os.replace(tmp, STATE)
+
+
+def patch_state(**maps) -> dict:
+    """Merge dict-valued keys into state.json. Other keys overwrite.
+
+    Used so a deadlines-only write cannot wipe closeon / resolveon for live
+    feed rounds — which is what persist() used to do.
+    """
+    st = load_state()
+    for key, value in maps.items():
+        if isinstance(value, dict):
+            cur = st.get(key)
+            if not isinstance(cur, dict):
+                cur = {}
+            cur.update(value)
+            st[key] = cur
+        else:
+            st[key] = value
+    write_state(st)
+    return st
+
+
+def drop_round_state(rid: str) -> dict:
+    """Remove one round's deadlines / close-on / resolve-on, keep the rest."""
+    st = load_state()
+    for key in ("deadlines", "closeon", "resolveon"):
+        bucket = st.get(key)
+        if isinstance(bucket, dict):
+            bucket.pop(rid, None)
+    write_state(st)
+    return st
 
 
 def client(c: dict) -> Client:
@@ -135,7 +190,8 @@ def resolve(spec: str) -> tuple[str | None, str]:
 
 # ------------------------------------------------------------------ board
 
-def build_board(c: dict, rounds: dict, table: dict, live: dict | None) -> dict:
+def build_board(c: dict, rounds: dict, table: dict, live: dict | None,
+                gap: bool = False) -> dict:
     rows = kb1.standings(table, top=10)
     view = {
         "title": c["title"],
@@ -171,6 +227,11 @@ def build_board(c: dict, rounds: dict, table: dict, live: dict | None) -> dict:
             ev += f" · evidence {last.frame}"
         view["foot"].append(
             f"last round landed on <b>{last.winner}</b> [{last.trust}] · {ev}")
+    if gap:
+        view["foot"].append(
+            "<b>LOG GAP</b> — the room compacted and lines were lost; "
+            "this board may be incomplete and will not auto-drive rounds"
+        )
     view["foot"].append(
         f"{settled} rounds settled · VER% = share of points from rounds an agent "
         f"could verify itself · recomputable from /r/{c['room']}"
@@ -189,27 +250,12 @@ class Loop(threading.Thread):
         self.c = c
         self.cli = client(c)
         self.board = {"meta": {}, "views": {}, "live": {}}
-        self.deadlines: dict[str, float] = self._load_deadlines()
-
-    @staticmethod
-    def _load_state() -> dict:
-        if os.path.exists(STATE):
-            try:
-                return json.load(open(STATE))
-            except Exception:
-                pass
-        return {}
-
-    @classmethod
-    def _load_deadlines(cls) -> dict:
-        return cls._load_state().get("deadlines", {})
-
-    def persist(self) -> None:
-        json.dump({"deadlines": self.deadlines}, open(STATE, "w"))
+        self.deadlines: dict[str, float] = load_state().get("deadlines", {})
+        self.log = kb1.Log(self.cli, c["room"], self.cli.identity.did,
+                           path=log_path(c["room"]))
 
     def run(self) -> None:
-        room, host = self.c["room"], self.cli.identity.did
-        log = kb1.Log(self.cli, room, host)
+        log = self.log
         backoff = 0.0
         while True:
             try:
@@ -237,8 +283,12 @@ class Loop(threading.Thread):
                             "running": running, "field": fieldname, "trust": rnd.trust}
                     break
 
-                self._tick(rounds, last_seq)
-                self.board = build_board(self.c, rounds, table, live)
+                if log.gap:
+                    print("[loop] LOG GAP — room compacted; not auto-driving rounds",
+                          file=sys.stderr)
+                else:
+                    self._tick(rounds, last_seq)
+                self.board = build_board(self.c, rounds, table, live, gap=log.gap)
             except TechnocoreError as exc:
                 # 429 tells you the refill rate in its body; respect it rather
                 # than hammering, or the bucket never recovers.
@@ -253,7 +303,7 @@ class Loop(threading.Thread):
         # Deadlines are written by the `open` command in a DIFFERENT process, so
         # re-read them every tick. Caching them at startup means a round opened
         # after `serve` began never closes itself — which is every round.
-        st = self._load_state()
+        st = load_state()
         self.deadlines = st.get("deadlines", {})
         closeon = st.get("closeon", {})
         try:
@@ -290,7 +340,7 @@ class Loop(threading.Thread):
                         {"w": winner, "ev": evidence or "-", "f": "-"})
                     print(f"[loop] resolved {rid}: {winner} ({evidence})")
                     self.deadlines.pop(rid, None)
-                    self.persist()
+                    drop_round_state(rid)
                 else:
                     print(f"[loop] {rid} unresolved: {evidence}", file=sys.stderr)
 
@@ -303,6 +353,20 @@ def serve(c: dict) -> None:
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):                                        # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path in ("/", "/overlay", "/board.html"):
+                try:
+                    raw = open(BOARD_HTML, encoding="utf-8").read().encode()
+                except OSError:
+                    self.send_error(500, "overlay/board.html missing")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             # The room is polled slowly because it changes slowly. The game feed
             # changes every few seconds and is a local file read, so refresh that
             # here instead — otherwise the live K/D only moves when someone in
@@ -341,9 +405,10 @@ def serve(c: dict) -> None:
         daemon_threads = True
 
     with Server(("127.0.0.1", c["port"]), Handler) as srv:
-        print(f"board  → http://127.0.0.1:{c['port']}/board.json")
-        print(f"room   → {c['base']}/r/{c['room']}")
-        print(f"host   → {loop.cli.identity.short}")
+        print(f"overlay → http://127.0.0.1:{c['port']}/")
+        print(f"board   → http://127.0.0.1:{c['port']}/board.json")
+        print(f"room    → {c['base']}/r/{c['room']}")
+        print(f"host    → {loop.cli.identity.short}")
         srv.serve_forever()
 
 
@@ -403,8 +468,9 @@ def main() -> None:
 
     cli = client(c)
     host = cli.identity.did
-    msgs = cli.read(c["room"], since=0, limit=200).get("messages", [])
-    rounds = kb1.collect(msgs, c["room"], host)
+    log = kb1.Log(cli, c["room"], host, path=log_path(c["room"]))
+    log.poll(wait=0)
+    rounds = log.rounds()
 
     if a.cmd == "open":
         rid = next_rid(set(rounds))
@@ -415,12 +481,7 @@ def main() -> None:
             trust = "api"
         say(cli, c["room"], "open", rid,
             {"q": a.question, "o": a.opts, "res": a.res, "t": trust})
-        st = {"deadlines": {}, "closeon": {}}
-        if os.path.exists(STATE):
-            try:
-                st = json.load(open(STATE))
-            except Exception:
-                pass
+        st = load_state()
         st.setdefault("deadlines", {})
         st.setdefault("closeon", {})
         st.setdefault("resolveon", {})
@@ -432,7 +493,7 @@ def main() -> None:
         else:
             st["deadlines"][rid] = time.time() + a.close_in
             how = f"closes in {a.close_in}s"
-        json.dump(st, open(STATE, "w"))
+        write_state(st)
         kind = "closest-to-the-number" if a.opts == kb1.NUMERIC else f"options {a.opts}"
         print(f"opened {rid} — {how} — {kind} — settles [{trust}]")
         if trust == "host":
@@ -449,6 +510,10 @@ def main() -> None:
         print(f"resolved {a.rid}: {a.winner}")
 
     elif a.cmd in ("publish", "audit"):
+        if log.gap:
+            print("LOG GAP — room compacted; local log is missing lines.", file=sys.stderr)
+            if a.cmd == "publish":
+                sys.exit("refusing to publish a board that may be incomplete")
         table = kb1.score(rounds)
         rows = kb1.standings(table, top=25)
         for i, r in enumerate(rows, 1):

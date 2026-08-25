@@ -15,6 +15,10 @@ t_*.json
 state.json
 feed.json
 ringmaster.json
+log.json
+log-*.json
+*.picks.json
+*.tmp
 .room
 .hostdid
 

@@ -32,6 +32,9 @@ Line format is one space-separated line, greppable by eye on stream:
 from __future__ import annotations
 
 import hashlib
+import json
+import math
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -64,19 +67,23 @@ _NORM = re.compile(r"[^a-z0-9]")
 PRECISION = 4
 
 
-def norm(pick) -> str:
-    text = str(pick).strip()
-    try:
-        return f"{float(text):.{PRECISION}f}"      # numeric picks: fixed precision
-    except (TypeError, ValueError):
-        return _NORM.sub("", text.lower())         # word picks: letters and digits
-
-
 def as_number(pick) -> float | None:
+    """Finite float, or None. inf / nan are not numbers for scoring or hashing."""
     try:
-        return float(str(pick).strip())
+        value = float(str(pick).strip())
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+def norm(pick) -> str:
+    text = str(pick).strip()
+    value = as_number(text)
+    if value is not None:
+        return f"{value:.{PRECISION}f}"            # numeric picks: fixed precision
+    return _NORM.sub("", text.lower())             # word picks: letters and digits
 
 
 def commitment(pick: str, rid: str, did: str) -> str:
@@ -228,6 +235,10 @@ def collect(messages: list[dict], room: str, host_did: str) -> dict[str, Round]:
         host = line.did == host_did
 
         if line.verb == "open" and host:
+            # First valid open is binding. A second open for the same rid cannot
+            # wipe bets, retcon the question, or upgrade the trust tier.
+            if line.rid in rounds:
+                continue
             tier = line.fields.get("t", TRUST_DEFAULT)
             if tier not in TRUST:
                 continue                  # an unknown tier is not a round
@@ -246,10 +257,13 @@ def collect(messages: list[dict], room: str, host_did: str) -> dict[str, Round]:
             continue
 
         if line.verb == "close" and host and rnd.close_seq is None:
+            # The named cutoff cannot outrun the close message itself. Otherwise
+            # at=999999999 would keep betting open after agents have revealed.
             try:
-                rnd.close_seq = int(line.fields.get("at", "0"))
+                named = int(line.fields.get("at", "0"))
             except ValueError:
-                pass
+                continue
+            rnd.close_seq = min(named, line.seq)
         elif line.verb == "result" and host and rnd.winner is None:
             rnd.winner = norm(line.fields.get("w", ""))
             rnd.evidence = line.fields.get("ev", "").replace(" ", " ")
@@ -295,6 +309,10 @@ def score(rounds: dict[str, Round]) -> dict[str, dict]:
 
         if rnd.numeric:
             target = as_number(rnd.winner)
+            if target is None:
+                for _, did, _ in valid:
+                    row(did)["streak"] = 0
+                continue
             ranked = []
             for seq, did, pick in valid:
                 got = as_number(pick)
@@ -409,21 +427,57 @@ class Log:
     every time, so the wait never engages and you burn the read budget in
     seconds — which is exactly how this got rate limited the first time.
     Keep the messages locally and only ever ask for what is new.
+
+    Pass `path` to persist the log across process restarts. After a ring
+    compaction the server cannot give back dropped lines; `gap` then stays
+    True and callers must not publish a board as if it were complete.
     """
 
-    def __init__(self, client, room: str, host_did: str):
+    def __init__(self, client, room: str, host_did: str, path: str | None = None):
         self.client = client
         self.room = room
         self.host_did = host_did
+        self.path = path
         self.messages: list[dict] = []
         self.seq = 0
         self.last_seq = 0
         self.gap = False
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path or not os.path.exists(self.path):
+            return
+        try:
+            data = json.load(open(self.path, encoding="utf-8"))
+        except Exception:
+            return
+        self.messages = data.get("messages") or []
+        self.seq = int(data.get("seq") or 0)
+        self.last_seq = int(data.get("last_seq") or self.seq)
+        self.gap = bool(data.get("gap"))
+
+    def _save(self) -> None:
+        if not self.path:
+            return
+        blob = {
+            "seq": self.seq,
+            "last_seq": self.last_seq,
+            "gap": self.gap,
+            "messages": self.messages,
+        }
+        tmp = self.path + ".tmp"
+        d = os.path.dirname(os.path.abspath(self.path))
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(blob, fh)
+        os.replace(tmp, self.path)
 
     def poll(self, wait: float = 10.0) -> list[dict]:
         view = self.client.read(self.room, since=self.seq, limit=200, wait=wait)
         self.last_seq = view.get("last_seq") or self.last_seq
         new = view.get("messages") or []
+        changed = False
         if new:
             first = view.get("first_seq") or new[0]["seq"]
             # The ring compacts under storage pressure; a jump means we lost lines.
@@ -431,6 +485,9 @@ class Log:
                 self.gap = True
             self.messages.extend(new)
             self.seq = new[-1]["seq"]
+            changed = True
+        if changed or (self.path and not os.path.exists(self.path)):
+            self._save()
         return new
 
     def rounds(self) -> dict:

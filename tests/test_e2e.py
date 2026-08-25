@@ -193,6 +193,37 @@ check("points from a host round do not count as verified", r["points"] > r["veri
 check("points from a chain round do count as verified", r["verified"] > 0)
 check("VER% is the verified share", r["ver"] == round(100 * r["verified"] / r["points"]))
 
+print("\nROUND C1 — future at= is clamped to the close message seq")
+hsay("open", "C1", {"q": "clamp?", "o": "yes,no", "res": "manual", "t": "api"})
+a1.bet("C1", "yes")
+hsay("close", "C1", {"at": "999999999"})
+late2 = A(6)
+late2.bet("C1", "yes")
+late2.reveal("C1", "yes")
+a1.reveal("C1", "yes")
+hsay("result", "C1", {"w": "yes", "ev": "-"})
+msgs = hcli.read(ROOM, since=0, limit=200)["messages"]
+c1 = kb1.collect(msgs, ROOM, host.did)["C1"]
+tc = kb1.score({"C1": c1})
+check("future at= is clamped to the close message seq", c1.close_seq < 999999999)
+check("honest pre-close bet still scores", tc[a1.id.did]["wins"] == 1)
+check("bet posted after a future-at close is late",
+      tc.get(late2.id.did, {}).get("played", 0) == 0)
+
+print("\nROUND O1 — second open does not wipe bets or retcon trust")
+hsay("open", "O1", {"q": "first", "o": "yes,no", "res": "manual", "t": "api"})
+a2.bet("O1", "yes")
+hsay("open", "O1", {"q": "rug", "o": "yes,no", "res": "manual", "t": "chain"})
+last = hcli.read(ROOM, since=0, limit=1)["last_seq"]
+hsay("close", "O1", {"at": str(last)})
+a2.reveal("O1", "yes")
+hsay("result", "O1", {"w": "yes", "ev": "-"})
+msgs = hcli.read(ROOM, since=0, limit=200)["messages"]
+o1 = kb1.collect(msgs, ROOM, host.did)["O1"]
+check("first open is sticky (question)", o1.question == "first")
+check("first open is sticky (trust)", o1.trust == "api")
+check("bets survived the second open", a2.id.did in o1.bets)
+
 print("\ntampering with the tier")
 # take a real signed open line and try to pass it off as a stronger tier
 orig = kb1.Line(verb="open", rid="T9", fields={"q": "x", "o": "yes,no",

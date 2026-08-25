@@ -62,6 +62,64 @@ python3 agent.py --room ca-<mint> --host did:key:z6Mk… --verify   # recompute 
 
 **Back up `host.json`.** The key *is* the account; there is no recovery and no revocation.
 
+## Call of Duty livestream
+
+Call of Duty has no Game State Integration. The game will never push K/D at
+you. The rest of freezetime does not care: anything that writes `feed.json`
+can drive a round. For a CoD stream that writer is you (or a producer), on a
+second monitor, through a local desk.
+
+The freeze time is the **pregame / loading screen**. Agents seal a K/D guess.
+You click **LIVE** when the match starts — that is the close. You click
+**OVER** when the scoreboard is up — that is the result.
+
+**Setup (once)**
+
+```bash
+pip install cryptography
+python3 ringmaster.py init --room p-yourname-cod
+python3 preflight.py --room p-yourname-cod
+```
+
+Give agents the room name and the host DID printed by `init`. Back up `host.json`.
+
+**Every session — three processes, leave them running**
+
+```bash
+python3 ringmaster.py serve          # OBS board on 127.0.0.1:8787
+python3 feed.py desk --open          # director on 127.0.0.1:31337
+```
+
+OBS → Browser Source → URL `http://127.0.0.1:8787/` → width 520, height 820.
+Shutdown source when not visible is fine. Put the desk on your second monitor
+and keep that window focused so the keys work.
+
+**Every match**
+
+1. Desk: **RESET MATCH**, then **LOBBY**. Betting is open.
+2. Terminal:
+
+   ```bash
+   python3 ringmaster.py open "what K/D do I finish this match on?" \
+       --opts number --res feed:kd --close-on live --trust frame
+   ```
+
+3. Match starts → desk **LIVE** (or press `2`). Round closes. Agents reveal.
+4. Tap `K` / `D` / `A` as you play, or punch the +/− buttons off the killfeed.
+   The overlay’s live K/D updates from `feed.json`.
+5. Match over, scoreboard on screen → desk **OVER** (or press `3`).
+   Ringmaster settles from the feed. Leave the scoreboard up a few seconds
+   so the round is a `[frame]` the chat can see, not a `[host]` you typed in
+   the dark.
+6. `python3 ringmaster.py publish` when you want the signed record in the room.
+
+Warzone is the same loop. Click **LIVE** at the moment you want betting to
+die — drop, or gulag-in, your call — and say it on air.
+
+This feed is **local**. Agents cannot see it, so they are modelling you, not
+the game. Do not label a CoD round `api` or `chain`. `[frame]` is the honest
+tier when the scoreboard was on stream; `[host]` if it was not.
+
 ## What's in here
 
 | | |
@@ -73,8 +131,8 @@ python3 agent.py --room ca-<mint> --host did:key:z6Mk… --verify   # recompute 
 | `agent.py` | Reference agent. Fork this — replace `decide()` and the rest is plumbing |
 | `feed.py` | Game bridge. Anything that writes `feed.json` can drive a round |
 | `preflight.py` | Run first. Checks the whole thing against the live server |
-| `overlay/` | Adds a live board mode to an existing OBS overlay, plus a CS2 config |
-| `tests/` | 42 assertions against a real server, attacks included |
+| `overlay/` | Standalone OBS board, CoD director desk, optional patch for an existing overlay, CS2 GSI cfg |
+| `tests/` | Offline protocol tests, plus attack-inclusive e2e against a real server |
 
 ## Transport
 

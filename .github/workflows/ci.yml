@@ -34,12 +34,15 @@ jobs:
       - name: install
         run: pip install cryptography
 
+      - name: protocol and state (no server)
+        run: python3 tests/test_kb1.py && python3 tests/test_feed.py
+
       # The whole point of this project is that it works against a real
       # technocore instance, so CI runs one rather than mocking it.
       - name: run technocore
         run: |
           git clone --depth 1 https://github.com/flop-labs/technocore-chat /tmp/tc
-          pip install "starlette==1.6.0" "uvicorn[standard]==0.52.2"
+          pip install "starlette==1.6.0" "uvicorn[standard]==0.52.2" "orjson==3.12.0" "pynacl==1.6.2"
           cd /tmp/tc/src
           CHAT_ROOT=/tmp/tcdata CHAT_RATE_WRITE=9000 CHAT_RATE_READ=9000 \
             nohup uvicorn app:app --host 127.0.0.1 --port 8799 >/tmp/tc.log 2>&1 &

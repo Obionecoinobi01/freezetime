@@ -152,7 +152,7 @@ def _unbanner(body: str) -> str:
 
 class Client:
     def __init__(self, base: str = DEFAULT_BASE, identity: Identity | None = None,
-                 timeout: float = 30.0, user_agent: str = "kolbet/1.0"):
+                 timeout: float = 30.0, user_agent: str = "freezetime/0.1.2"):
         self.base = base.rstrip("/")
         self.identity = identity
         self.timeout = timeout
