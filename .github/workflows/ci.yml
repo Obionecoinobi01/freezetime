@@ -12,13 +12,20 @@ jobs:
 
       # A private seed in a public repo cannot be rotated — the key is the
       # account. Fail the build rather than trust .gitignore alone.
+      # A private seed in a public repo cannot be rotated — the key IS the
+      # account. Match an actual 32-byte seed VALUE, not the identifier, or
+      # this trips on technocore.py where "seed_hex" is a legitimate dict key.
       - name: no private keys committed
         run: |
-          if git grep -In "seed_hex" -- . ':!.gitignore' ':!.github' ; then
-            echo "::error::a private seed appears in tracked files"
+          if git grep -InE '"seed_hex"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' -- . ; then
+            echo "::error::a private Ed25519 seed appears in a tracked file"
             exit 1
           fi
-          echo "clean"
+          if git ls-files | grep -Ex '(host|identity|agent)\.json'; then
+            echo "::error::a key file is tracked"
+            exit 1
+          fi
+          echo "no key material tracked"
 
       - uses: actions/setup-python@v5
         with:
