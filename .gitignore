@@ -36,3 +36,7 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+
+# nonce ceilings, written beside each identity
+*.nonce
+*.nonce.tmp

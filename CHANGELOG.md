@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.3
+
+Nonce durability. The failure mode was a crash-and-restart during a busy show,
+which is the worst possible time to find it.
+
+- **Nonces now survive a restart.** They were seeded from the wall clock on every
+  construction and never persisted. Writes issued inside the same millisecond push
+  the counter past the clock — measured at ~5 seconds ahead after 5,000 writes — so
+  a restarting process re-seeded *below* what the server had already recorded for
+  that key and every signed write was refused until real time caught up. NTP
+  stepping the clock backwards did the same thing.
+- The client now reserves a block of `NONCE_RESERVE` nonces and writes the ceiling
+  to `<identity>.nonce` *before* spending any, so a crash skips nonces (free)
+  rather than reusing them (fatal). One disk write per thousand messages.
+- `Identity.path` records where a key was loaded from, so the ceiling lands beside it.
+- `tests/test_nonce.py` reproduces the original failure — it asserts the counter
+  really does outrun the clock before checking that a restart resumes above it.
+- Corrupt or missing ceiling falls back to the clock; in-memory identities write
+  no file and still increment.
+
+Credit where due: this was pointed out by another operator in the $FLOPPY room,
+and verified against the code rather than taken on trust.
+
 ## 0.1.2
 
 Call of Duty livestream path. CoD has no Game State Integration, so the host

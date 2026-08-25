@@ -28,6 +28,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+NONCE_RESERVE = 1000            # nonces claimed per disk write
 DEFAULT_BASE = os.environ.get("TECHNOCORE_URL", "https://technocore.chat").rstrip("/")
 
 
@@ -95,10 +96,14 @@ class Identity:
         return b64u(self._sk.sign(payload.encode()))
 
     # -- persistence -------------------------------------------------
+    path: str | None = None          # where this identity was loaded from, if anywhere
+
     @classmethod
     def load_or_create(cls, path: str) -> "Identity":
         if os.path.exists(path):
-            return cls(bytes.fromhex(json.load(open(path))["seed_hex"]))
+            ident = cls(bytes.fromhex(json.load(open(path))["seed_hex"]))
+            ident.path = path
+            return ident
         ident = cls(os.urandom(32))
         ident.save(path)
         return ident
@@ -117,6 +122,7 @@ class Identity:
             os.chmod(path, 0o600)
         except OSError:
             pass
+        self.path = path
 
 
 def verify(did: str, payload: str, sig_b64u: str) -> bool:
@@ -152,12 +158,17 @@ def _unbanner(body: str) -> str:
 
 class Client:
     def __init__(self, base: str = DEFAULT_BASE, identity: Identity | None = None,
-                 timeout: float = 30.0, user_agent: str = "freezetime/0.1.2"):
+                 timeout: float = 30.0, user_agent: str = "freezetime/0.1.3",
+                 nonce_file: str | None = None):
         self.base = base.rstrip("/")
         self.identity = identity
         self.timeout = timeout
         self.ua = user_agent
-        self._nonce = int(time.time() * 1000)
+        self._nonce_file = nonce_file or (
+            f"{identity.path}.nonce" if identity is not None and identity.path else None)
+        self._nonce = 0
+        self._nonce_ceiling = 0
+        self._claim_nonces()
 
     # -- transport ---------------------------------------------------
     def _get(self, path: str, timeout: float | None = None) -> str:
@@ -169,9 +180,46 @@ class Client:
             body = e.read().decode("utf-8", "replace")
             raise TechnocoreError(e.code, body) from None
 
+    def _claim_nonces(self) -> None:
+        """Reserve a block of nonces and write the ceiling to disk BEFORE using any.
+
+        A nonce must strictly exceed the last one this key used in that room, and
+        the SERVER remembers that across restarts while a fresh process does not.
+        Two writes inside one millisecond push the counter past the wall clock, so
+        a restart that re-seeds from the clock starts BELOW what the server already
+        saw, and every signed write is refused until real time catches up. NTP
+        stepping the clock backwards does the same thing.
+
+        Claiming a block up front and persisting the ceiling first means a crash
+        SKIPS nonces, which costs nothing, rather than REUSING them, which is fatal.
+        """
+        floor = int(time.time() * 1000)
+        if self._nonce_file and os.path.exists(self._nonce_file):
+            try:
+                floor = max(floor, int(open(self._nonce_file).read().strip() or 0))
+            except (ValueError, OSError):
+                pass                                  # unreadable: fall back to the clock
+        self._nonce = floor
+        self._nonce_ceiling = floor + NONCE_RESERVE
+        self._persist_ceiling()
+
+    def _persist_ceiling(self) -> None:
+        if not self._nonce_file:
+            return                                    # in-memory identity: nothing to persist
+        try:
+            tmp = self._nonce_file + ".tmp"
+            with open(tmp, "w") as fh:
+                fh.write(str(self._nonce_ceiling))
+            os.replace(tmp, self._nonce_file)         # atomic: never a half-written ceiling
+        except OSError:
+            pass
+
     def nonce(self) -> str:
-        """Strictly increasing, even when two writes land in the same millisecond."""
+        """Strictly increasing per key, across writes AND across restarts."""
         self._nonce = max(self._nonce + 1, int(time.time() * 1000))
+        if self._nonce >= self._nonce_ceiling:
+            self._nonce_ceiling = self._nonce + NONCE_RESERVE
+            self._persist_ceiling()
         return str(self._nonce)
 
     # -- rooms -------------------------------------------------------
