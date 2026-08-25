@@ -40,3 +40,8 @@ build/
 # nonce ceilings, written beside each identity
 *.nonce
 *.nonce.tmp
+
+# ── self-host ─────────────────────────────────────────────────────────────
+deploy/technocore.env
+deploy/technocore-chat/
+deploy/*.tar.gz

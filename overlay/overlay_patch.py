@@ -69,6 +69,14 @@ body[data-mode="bets"] #board .bfoot{
 }
 body[data-mode="bets"] #board .bfoot b{ color:#ffd166; }
 
+/* Two foot lines side by side squash into unreadable columns at stream size.
+   The Scoreboard's foot is a flex row because its lines are short; ours are
+   sentences, so stack them. */
+body[data-mode="bets"] #board .bfoot{
+  flex-direction:column; gap:5px; line-height:1.5;
+}
+body[data-mode="bets"] #board .bfoot div{ max-width:none; }
+
 /* the round state line pulses only while betting is open */
 body[data-mode="bets"] #bfoot b{ color:#ffd166; }
 body[data-mode="bets"].live-open #bfoot div:first-child b:first-child{

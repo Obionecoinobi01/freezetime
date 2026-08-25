@@ -1,0 +1,16 @@
+# Replace chat.example.com with your hostname. Caddy gets and renews the
+# certificate on its own; there is nothing else to configure for TLS.
+chat.example.com {
+	encode zstd gzip
+	reverse_proxy technocore:8080
+
+	# technocore reads the client IP from this header when CHAT_CLIENT_IP_HEADER
+	# is set. Caddy REPLACES rather than appends, so a caller cannot smuggle a
+	# fake one in and hand themselves a fresh rate-limit budget.
+	header_up X-Forwarded-For {remote_host}
+
+	log {
+		output file /data/access.log
+		format console
+	}
+}
