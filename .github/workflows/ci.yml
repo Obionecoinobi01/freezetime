@@ -35,7 +35,7 @@ jobs:
         run: pip install cryptography
 
       - name: protocol and state (no server)
-        run: python3 tests/test_kb1.py && python3 tests/test_feed.py
+        run: python3 tests/test_kb1.py && python3 tests/test_feed.py && python3 tests/test_nonce.py
 
       # The whole point of this project is that it works against a real
       # technocore instance, so CI runs one rather than mocking it.
