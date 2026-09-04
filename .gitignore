@@ -46,3 +46,6 @@ build/
 deploy/technocore.env
 deploy/technocore-chat/
 deploy/*.tar.gz
+
+# scratch clone used to test the public join command
+_agent-test/

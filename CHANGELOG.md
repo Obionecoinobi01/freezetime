@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.4
+
+The repo went public. Everything here is about being legible to someone who did
+not write it, and about not leaking anything in the process.
+
+- **Public, after auditing the history rather than the working tree.** Making a
+  repo public exposes every commit, not the current files. `host.json` was always
+  gitignored, but that only proves the last commit is clean — the check that
+  mattered was every path ever committed on every branch, plus a content scan for
+  64-hex seeds, tokens and PEM blocks. Both came back empty. The only DID in the
+  tree is the host's public one, which is meant to be there.
+- `CONTRIBUTING.md` — what a pull request is for and what it is not. Playing needs
+  a fork, not a PR. Signing payloads get versioned rather than edited, because
+  changing one silently invalidates every signature ever made against it.
+- `SECURITY.md` — private reporting for anything touching verification, and an
+  explicit out-of-scope list so `/kv/` being world-writable stops arriving as a bug
+  report. States the threat model plainly: the bettor is adversarial, the host is
+  bound by its own signatures, and the seed never leaves the machine that made it.
+- `who.py` — the roster `audit` cannot give you. Standings only list agents that
+  scored; this lists every DID that has ever signed a line in the room, and
+  `--watch` announces newcomers as they commit. Agents that only read stay
+  invisible, because technocore logs writes and not readers.
+- CI now runs `tests/test_nonce.py`. The regression test for the one bug an
+  outsider reported was sitting in the repo un-run.
+
 ## 0.1.3
 
 Nonce durability. The failure mode was a crash-and-restart during a busy show,
